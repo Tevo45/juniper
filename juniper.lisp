@@ -5,14 +5,15 @@
 ;; those are used by the generator internally and should be globally unbound
 (defvar *schema*)
 (defvar *proto*)
-(defvar *host*)
+(defvar *url*)
 (defvar *base-path*)
 (defvar *accept-header*)
 (defvar *endpoint*)
 (defvar *path-params*)
 
 ;; those can be used to change the behaviour of the generated functions at runtime
-(defvar *url* ())
+(defvar *host* nil)
+(defvar *port* nil)
 (defvar *drakma-extra-args* ())
 
 (defun lisp-sym (str)
@@ -85,14 +86,18 @@
     (multiple-value-bind (params code) (genparams op urlsym hdrsym paramssym bodysym formsym)
       `(defun ,(path-funcname op) ,params ; FIXME
 	 ,(ophelp op)
-	 (let ((,urlsym (if *url* *url* ,*url*))
+	 (let ((,urlsym (puri:uri ,*url*))
 	       (,hdrsym '())
 	       (,paramssym '())
 	       (,bodysym nil)
 	       (,formsym nil))
 	   ,@code
+	   (if juniper:*host*
+	       (setf (puri:uri-host ,urlsym) juniper:*host*))
+	   (if juniper:*port*
+	       (setf (puri:uri-port ,urlsym) juniper:*port*))
 	   (let ((,responsesym (apply #'drakma:http-request
-				      ,urlsym
+				      (puri:render-uri ,urlsym nil)
 				      :method ,(opmethod op)
 				      :parameters ,paramssym
 				      :additional-headers ,hdrsym

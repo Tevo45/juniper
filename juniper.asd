@@ -6,6 +6,6 @@
   :license  "MIT"
   :version "0.0.1"
   :serial t
-  :depends-on ("alexandria" "cl-json" "drakma" "kebab")
+  :depends-on ("alexandria" "cl-json" "drakma" "kebab" "puri")
   :components ((:file "package")
                (:file "juniper")))

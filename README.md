@@ -10,7 +10,7 @@ Clone the repository to somewhere ASDF can find, then
 (asdf:load-system :juniper)
 ```
 
-Do note that the generated code will still have runtime dependencies on [drakma](https://github.com/edicl/drakma) and [cl-json](https://github.com/hankhero/cl-json).
+Do note that the generated code will still have runtime dependencies on [drakma](https://github.com/edicl/drakma), [puri](https://github.com/llibra/puri) (which is also a dependency of drakma) and [cl-json](https://github.com/hankhero/cl-json).
 
 Juniper is not yet installable with quicklisp.
 
