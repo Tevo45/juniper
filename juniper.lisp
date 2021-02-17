@@ -9,9 +9,10 @@
 (defvar *base-path*)
 (defvar *accept-header*)
 (defvar *endpoint*)
-(defvar *url*)
 (defvar *path-params*)
 
+;; those can be used to change the behaviour of the generated functions at runtime
+(defvar *url* ())
 (defvar *drakma-extra-args* ())
 
 (defun lisp-sym (str)
@@ -84,7 +85,7 @@
     (multiple-value-bind (params code) (genparams op urlsym hdrsym paramssym bodysym formsym)
       `(defun ,(path-funcname op) ,params ; FIXME
 	 ,(ophelp op)
-	 (let ((,urlsym ,*url*)
+	 (let ((,urlsym (if *url* *url* ,*url*))
 	       (,hdrsym '())
 	       (,paramssym '())
 	       (,bodysym nil)

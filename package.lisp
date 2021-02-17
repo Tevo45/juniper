@@ -3,6 +3,7 @@
 (defpackage #:juniper
   (:use #:cl #:alexandria)
   (:export :*drakma-extra-args*
+	   :*url*
 
            :generate-bindings
 	   
