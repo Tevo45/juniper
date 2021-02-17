@@ -1,6 +1,6 @@
-;;;; jyoon.lisp
+;;;; juniper.lisp
 
-(in-package #:jyoon)
+(in-package #:juniper)
 
 ;; those are used by the generator internally and should be globally unbound
 (defvar *schema*)
@@ -50,7 +50,7 @@
 		    ("body"
 		     `(setf ,bodysym
 			    (concatenate 'string ,bodysym
-					 (json:encode-json ,namesym))))
+					 (json:encode-json-to-string ,namesym))))
 		    ("formData"
 		     `(progn
 			(setf ,formsym t)
@@ -61,7 +61,12 @@
 		 code)))
     (if (> (length optional) 0)
 	(push '&key optional))
-    (values (append required optional) code)))
+    ;; FIXME we sometimes somehow generate duplicate parameters, specifics still unclear
+    ;; reproducible with the LCU schema for version 11.2.353.8505, removing duplicates on
+    ;; the loop does not work
+    ;; below call to remove-duplicates on the parametes is a workaround so that we can
+    ;; at least generate valid function params, but there's still duplicate handling code
+    (values (remove-duplicates (append required optional)) code)))
 
 (defun opmethod (op) ; FIXME is there a better way to "uppercase a symbol"?
   (read-from-string (concatenate 'string ":" (string (car op)))))
@@ -88,7 +93,9 @@
 						    :parameters ,paramssym
 						    :additional-headers ,hdrsym
 						    :form-data ,formsym
-						    :content ,bodysym)))
+						    :content-type "application/json" ; FIXME
+						    :content ,bodysym
+						    :accept ,*accept-header*)))
 	     (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym))
 	       (json:decode-json ,streamsym)))))))) ; FIXME we just assume this returns json, it might not
 
@@ -104,6 +111,7 @@
 		    collect (genfunc op))))))
 
 (defun generate-bindings (jsonstream &optional proto host base-path *accept-header*)
+  "Generates Swagger/OpenAPI bindings based on JSON from `jsonstream`. Optional parameters can be used to override specific fields from the schema"
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x))
 	 (*schema*    (json:decode-json jsonstream))
 	 
@@ -128,11 +136,14 @@
   `(generate-bindings ,var proto host base-path accept-header))
 
 (from-source (file)
+  "Generates bindings from local file at `file`"
   (with-open-file (stream (eval file)) (bindings-from stream)))
 
 (from-source (json)
+  "Generates bindings from a literal json string"
   (with-input-from-string (stream (eval json)) (bindings-from stream)))
 
 (from-source (url) ; FIXME there has to be a better way to do this
+  "Generates bindings for remote schema at `url`"
   (with-input-from-string (stream (flexi-streams:octets-to-string (drakma:http-request url)))
     (bindings-from stream)))

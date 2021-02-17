@@ -1,6 +1,6 @@
-;;;; jyoon.asd
+;;;; juniper.asd
 
-(asdf:defsystem #:jyoon
+(asdf:defsystem #:juniper
   :description "A macro-based swagger code generator for Common Lisp"
   :author "Estevan Castilho <estevan.cps@gmail.com>"
   :license  "MIT"
@@ -8,4 +8,4 @@
   :serial t
   :depends-on ("alexandria" "cl-json" "drakma" "kebab")
   :components ((:file "package")
-               (:file "jyoon")))
+               (:file "juniper")))

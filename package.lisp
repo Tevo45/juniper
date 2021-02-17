@@ -1,4 +1,9 @@
 ;;;; package.lisp
 
-(defpackage #:jyoon
-  (:use #:cl #:alexandria))
+(defpackage #:juniper
+  (:use #:cl #:alexandria)
+  (:export :generate-bindings
+	   
+	   :bindings-from-file
+	   :bindings-from-json
+	   :bindings-from-url))
