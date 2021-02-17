@@ -2,7 +2,9 @@
 
 (defpackage #:juniper
   (:use #:cl #:alexandria)
-  (:export :generate-bindings
+  (:export :*drakma-extra-args*
+
+           :generate-bindings
 	   
 	   :bindings-from-file
 	   :bindings-from-json

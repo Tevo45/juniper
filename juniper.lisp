@@ -12,6 +12,8 @@
 (defvar *url*)
 (defvar *path-params*)
 
+(defvar *drakma-extra-args* ())
+
 (defun lisp-sym (str)
   (read-from-string (kebab:to-lisp-case str)))
 
@@ -88,14 +90,16 @@
 	       (,bodysym nil)
 	       (,formsym nil))
 	   ,@code
-	   (let ((,responsesym (drakma:http-request ,urlsym
-						    :method ,(opmethod op)
-						    :parameters ,paramssym
-						    :additional-headers ,hdrsym
-						    :form-data ,formsym
-						    :content-type "application/json" ; FIXME
-						    :content ,bodysym
-						    :accept ,*accept-header*)))
+	   (let ((,responsesym (apply #'drakma:http-request
+				      ,urlsym
+				      :method ,(opmethod op)
+				      :parameters ,paramssym
+				      :additional-headers ,hdrsym
+				      :form-data ,formsym
+				      :content-type "application/json" ; FIXME
+				      :content ,bodysym
+				      :accept ,*accept-header*
+				      juniper:*drakma-extra-args*)))
 	     (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym))
 	       (json:decode-json ,streamsym)))))))) ; FIXME we just assume this returns json, it might not
 

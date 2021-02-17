@@ -1,5 +1,5 @@
 # *Juniper*
-### A  macro-based swagger binding generator for Common Lisp
+### A macro-based swagger binding generator for Common Lisp
 
 Juniper provides a couple of macros that generates code for interacting with web APIs based on a Swagger/OpenAPI schema; it is designed to allow Common Lisp to seamlessly interact with web services over HTTP just as if they were local Lisp packages. Currently, only Swagger 2.0 schemas are supported.
 
@@ -9,6 +9,8 @@ Clone the repository to somewhere ASDF can find, then
 ```lisp
 (asdf:load-system :juniper)
 ```
+
+Do note that the generated code will still have runtime dependencies on [drakma](https://github.com/edicl/drakma) and [cl-json](https://github.com/hankhero/cl-json).
 
 Juniper is not yet installable with quicklisp.
 
@@ -28,7 +30,11 @@ CREATE-USER
  (:LAST-NAME . "USER1LN") (:EMAIL . "user1@test1.com") (:PASSWORD . "123456")
  (:PHONE . "0852538578") (:USER-STATUS . 0))
  
-> (login-user "sekuritz@!47" "tevo")
+> (let ((juniper:*drakma-extra-args* '(:user-agent :firefox)))
+    (login-user "sekuritz@!47" "tevo"))
 ((:CODE . 200) (:TYPE . "unknown")
  (:MESSAGE . "logged in user session:1613522477592"))
 ```
+
+## License
+[MIT](./LICENSE)
