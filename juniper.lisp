@@ -106,7 +106,7 @@
 				      :content ,bodysym
 				      :accept ,*accept-header*
 				      juniper:*drakma-extra-args*)))
-	     (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym))
+	     (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8))
 	       (json:decode-json ,streamsym)))))))) ; FIXME we just assume this returns json, it might not
 
 (defun swagger-bindings ()
