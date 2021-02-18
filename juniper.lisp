@@ -120,16 +120,17 @@
 		    for op in (cdr path)
 		    collect (genfunc op))))))
 
-(defun generate-bindings (jsonstream &optional proto host base-path *accept-header*)
+(defun generate-bindings (jsonstream &key proto host base-path accept-header)
   "Generates Swagger/OpenAPI bindings based on JSON from `jsonstream`. Optional parameters can be used to override specific fields from the schema"
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x))
-	 (*schema*    (json:decode-json jsonstream))
+	 (*schema*        (json:decode-json jsonstream))
 	 
-	 (version     (either (cdr (assoc :|swagger| *schema*)) (cdr (assoc :|openapi| *schema*))))
+	 (version         (either (cdr (assoc :|swagger| *schema*)) (cdr (assoc :|openapi| *schema*))))
 	 
-	 (*proto*     (either proto     (cadr (assoc :|schemes| *schema*))    ))
-	 (*host*      (either host      (cdr (assoc :|host| *schema*))        ))
-	 (*base-path* (either base-path (cdr (assoc :|basePath| *schema*)) "/")))
+	 (*proto*         (either proto         (cadr (assoc :|schemes| *schema*))    ))
+	 (*host*          (either host          (cdr (assoc :|host| *schema*))        ))
+	 (*base-path*     (either base-path     (cdr (assoc :|basePath| *schema*)) "/"))
+	 (*accept-header* (either accept-header "application/json"                    )))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -137,23 +138,23 @@
   
 ;;; lazy and sloppy
 
-(defmacro from-source ((name) &body body)
+(defmacro defsource ((name options) &body body)
   `(defmacro ,(read-from-string (concatenate 'string "bindings-from-" (string name)))
-       (,name &key proto host base-path (accept-header "application/json"))
+       (,name &rest ,options &key proto host base-path (accept-header "application/json"))
+     (declare (ignore proto host base-path accept-header))
      ,@body))
 
-(defmacro bindings-from (var)
-  `(generate-bindings ,var proto host base-path accept-header))
-
-(from-source (file)
+(defsource (file opts)
   "Generates bindings from local file at `file`"
-  (with-open-file (stream (eval file)) (bindings-from stream)))
+  (with-open-file (stream (eval file))
+    (apply #'generate-bindings stream opts)))
 
-(from-source (json)
-  "Generates bindings from a literal json string"
-  (with-input-from-string (stream (eval json)) (bindings-from stream)))
+(defsource (json opts)
+  "Generates bindings from a literal J1SON string"
+  (with-input-from-string (stream (eval json))
+    (apply #'generate-bindings stream opts)))
 
-(from-source (url) ; FIXME there has to be a better way to do this
+(defsource (url opts) ; FIXME there has to be a better way to do this
   "Generates bindings for remote schema at `url`"
   (with-input-from-string (stream (flexi-streams:octets-to-string (drakma:http-request url)))
-    (bindings-from stream)))
+    (apply #'generate-bindings stream opts)))
