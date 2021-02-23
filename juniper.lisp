@@ -82,7 +82,7 @@
   (lisp-sym (cdr (assoc :|operationId| (cdr pathop)))))
 
 (defun genfunc (op)
-  (with-gensyms (urlsym hdrsym paramssym bodysym formsym responsesym streamsym parsedsym)
+  (with-gensyms (urlsym hdrsym paramssym bodysym formsym responsesym streamsym parsedsym resstrsym)
     (multiple-value-bind (params code) (genparams op urlsym hdrsym paramssym bodysym formsym)
       `(defun ,(path-funcname op) ,params ; FIXME
 	 ,(ophelp op)
@@ -97,7 +97,7 @@
 		 (setf (puri:uri-host ,parsedsym) juniper:*host*))
 	     (if juniper:*port*
 		 (setf (puri:uri-port ,parsedsym) juniper:*port*))
-	     (let ((,responsesym (apply #'drakma:http-request
+	     (let* ((,responsesym (apply #'drakma:http-request
 					(puri:render-uri ,parsedsym nil)
 					:method ,(opmethod op)
 					:parameters ,paramssym
@@ -106,9 +106,11 @@
 					:content-type "application/json" ; FIXME
 					:content ,bodysym
 					:accept ,*accept-header*
-					juniper:*drakma-extra-args*)))
-	       (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8))
-		 (json:decode-json ,streamsym))))))))) ; FIXME we just assume this returns json, it might not
+					juniper:*drakma-extra-args*))
+		    (,resstrsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8)))
+	       (if (> (length ,resstrsym) 0)
+		   (with-input-from-string (,streamsym ,resstrsym)
+		     (json:decode-json ,streamsym)))))))))) ; FIXME we just assume this returns json, it might not
 
 (defun swagger-bindings ()
   `(progn
