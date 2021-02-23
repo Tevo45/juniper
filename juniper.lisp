@@ -82,32 +82,33 @@
   (lisp-sym (cdr (assoc :|operationId| (cdr pathop)))))
 
 (defun genfunc (op)
-  (with-gensyms (urlsym hdrsym paramssym bodysym formsym responsesym streamsym)
+  (with-gensyms (urlsym hdrsym paramssym bodysym formsym responsesym streamsym parsedsym)
     (multiple-value-bind (params code) (genparams op urlsym hdrsym paramssym bodysym formsym)
       `(defun ,(path-funcname op) ,params ; FIXME
 	 ,(ophelp op)
-	 (let ((,urlsym (puri:uri ,*url*))
+	 (let ((,urlsym ,*url*)
 	       (,hdrsym '())
 	       (,paramssym '())
 	       (,bodysym nil)
 	       (,formsym nil))
 	   ,@code
-	   (if juniper:*host*
-	       (setf (puri:uri-host ,urlsym) juniper:*host*))
-	   (if juniper:*port*
-	       (setf (puri:uri-port ,urlsym) juniper:*port*))
-	   (let ((,responsesym (apply #'drakma:http-request
-				      (puri:render-uri ,urlsym nil)
-				      :method ,(opmethod op)
-				      :parameters ,paramssym
-				      :additional-headers ,hdrsym
-				      :form-data ,formsym
-				      :content-type "application/json" ; FIXME
-				      :content ,bodysym
-				      :accept ,*accept-header*
-				      juniper:*drakma-extra-args*)))
-	     (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8))
-	       (json:decode-json ,streamsym)))))))) ; FIXME we just assume this returns json, it might not
+	   (let ((,parsedsym (puri:uri ,urlsym)))
+	     (if juniper:*host*
+		 (setf (puri:uri-host ,parsedsym) juniper:*host*))
+	     (if juniper:*port*
+		 (setf (puri:uri-port ,parsedsym) juniper:*port*))
+	     (let ((,responsesym (apply #'drakma:http-request
+					(puri:render-uri ,parsedsym nil)
+					:method ,(opmethod op)
+					:parameters ,paramssym
+					:additional-headers ,hdrsym
+					:form-data ,formsym
+					:content-type "application/json" ; FIXME
+					:content ,bodysym
+					:accept ,*accept-header*
+					juniper:*drakma-extra-args*)))
+	       (with-input-from-string (,streamsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8))
+		 (json:decode-json ,streamsym))))))))) ; FIXME we just assume this returns json, it might not
 
 (defun swagger-bindings ()
   `(progn
