@@ -38,9 +38,40 @@
   "Looks up the value associated with `item` in `alist`"
   (cdr (assoc item alist)))
 
-(defun field (item &optional (alist *schema*))
+(defun replicate (item &aux (cons (list item)))
+  "Returns an infinite list of `item`"
+  (setf (cdr cons) cons))
+
+(defun fetch-and-parse-json (url)
+  (cl-json:decode-json-from-string
+   (flexi-streams:octets-to-string
+    (drakma:http-request url))))
+
+(defun resolve-ref (target &optional root
+		    &aux (cl-json:*json-identifier-name-to-lisp* (lambda (x) x)))
+  (labels ((recursive-resolve-ref (target root)
+	     (if (null target)
+		 root
+		 (recursive-resolve-ref
+		  (cdr target)
+		  (assoc-field (car target) root)))))
+    (destructuring-bind (url location) (cl-ppcre:split "#" target :limit 2)
+      (unless (zerop (length url))
+	(setf root (fetch-and-parse-json url)))
+      (recursive-resolve-ref
+       (mapcar #'intern (cdr (cl-ppcre:split "/" location))
+	       (replicate 'keyword))
+       root))))
+
+(defun field (item
+	      &optional (alist *schema*)
+		(root (or (when (boundp '*schema*) *schema*) alist))
+	      &aux (ref (assoc-field :|$ref| alist)))
   "Looks up the value associated with `item` in `alist` (defaults to schema currently being processed), follows (and automatically fetches and parses) `$ref`s as needed"
-  (assoc-field item alist)) ; FIXME
+  (assoc-field item
+	       (if (null ref)
+		   alist
+		   (resolve-ref ref root))))
 
 ;;; generator code
 
@@ -186,5 +217,3 @@
   (with-input-from-string (stream (flexi-streams:octets-to-string
 				   (drakma:http-request (eval url))))
     (dispatch-bindings stream)))
-
-;(bindings-from-url "https://petstore.swagger.io/v2/swagger.json")
