@@ -11,150 +11,180 @@
 (defvar *endpoint*)
 (defvar *path-params*)
 
+;; can't have them as parameters to the generated functions lest them conflict
+;; with a parameter in the schema; unsure if using dynamic variables for this
+;; is very ideal though
+;; *drakma-extra-args* also breaks the abstraction and ties us up to drakma
+
 ;; those can be used to change the behaviour of the generated functions at runtime
-(defvar *host* nil)
-(defvar *port* nil)
-(defvar *drakma-extra-args* ())
+(defvar *host*)
+(defvar *port*)
+(defvar *drakma-extra-args* nil)
 
-(defun lisp-sym (str)
-  (read-from-string (kebab:to-lisp-case str)))
+;;; utilities
+;; `mkstr` and `symb` are from Let over Lambda, which I believe were taken from On Lisp
+(eval-when (compile load eval)
+  (defun mkstr (&rest args)
+    (with-output-to-string (s)
+      (dolist (a args) (princ a s))))
 
-(defun genparams (op urlsym hdrsym paramssym bodysym formsym)
-  (let ((required '())
-	(optional '())
+  (defun symb (&rest args)
+    (values (intern (apply #'mkstr args))))
 
-	(code '()))
-    (loop
-      for param in (append *path-params* (cdr (assoc :|parameters| (cdr op))))
-      do (let* ((name (cdr (assoc :|name| param)))
-		(namesym (lisp-sym name))
-		(namesym-p (lisp-sym (concatenate 'string name "-supplied-p")))
-		(isrequired (cdr (assoc :|required| param)))
-		(in (cdr (assoc :|in| param))))
-	   (if isrequired
-	       (push namesym required)
-	       (push `(,namesym nil ,namesym-p) optional))
-	   (push
-	    `(if ,(if isrequired t namesym-p)
-		 ,(switch (in :test #'string=)
-		    ("path"
-		     `(setf ,urlsym
-			    (cl-ppcre:regex-replace ,(format nil "{~a}" name)
-						    ,urlsym
-						    (format nil "~a" ,namesym))))
-		    ("query"
-		     `(push (cons ,name (format nil "~a" ,namesym))
-			    ,paramssym))
-		    ("header"
-		     `(push (cons ,name (format nil "~a" ,namesym))
-			    ,hdrsym))
-		    ("body"
-		     `(setf ,bodysym
-			    (concatenate 'string ,bodysym
-					 (json:encode-json-to-string ,namesym))))
-		    ("formData"
-		     `(progn
-			(setf ,formsym t)
-			(push (cons ,name (format nil "~a" ,namesym))
-			      ,paramssym)))
-		    (otherwise
-		     (warn "Don't know how to handle parameters in ~a." in))))
-		 code)))
-    (if (> (length optional) 0)
+  (defun lisp-symbol (val)
+    (intern (string-upcase (kebab:to-lisp-case (string val))))))
+
+(defun assoc-field (item alist)
+  "Looks up the value associated with `item` in `alist`"
+  (cdr (assoc item alist)))
+
+(defun field (item &optional (alist *schema*))
+  "Looks up the value associated with `item` in `alist` (defaults to schema currently being processed), follows (and automatically fetches and parses) `$ref`s as needed"
+  (assoc-field item alist)) ; FIXME
+
+;;; generator code
+
+(defun function-for-op (op &aux required optional assistance-code)
+  (with-gensyms (url query-params headers body uses-form parsed-url
+		 response response-string stream)
+    (labels ((parse-parameter (param)
+	       (let* ((name (field :|name| param))
+		      (symbolic-name (lisp-symbol name))
+		      (supplied-p (symb symbolic-name '-supplied-p))
+		      (is-required (field :|required| param))
+		      (in (field :|in| param)))
+		 (if is-required
+		     (push symbolic-name required)
+		     (push `(,symbolic-name nil ,supplied-p) optional))
+		 (push
+		  `(if ,(if is-required t supplied-p)
+		       ,(switch (in :test #'string=)
+			  ("path"
+			   `(setf ,url
+				  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
+							  ,url (mkstr ,symbolic-name))))
+			  ("query"
+			   `(push (cons ,name (mkstr ,symbolic-name))
+					,query-params))
+			  ("header"
+			   `(push (cons ,name (mkstr ,symbolic-name))
+				  ,headers))
+			  ("body"
+			   `(setf ,body
+				  (concatenate 'string ,body
+					       (json:encode-json-to-string ,symbolic-name))))
+			  ("formData"
+			   `(progn
+			      (setf ,uses-form t)
+			      (push (cons ,name (mkstr ,symbolic-name))
+				    ,query-params)))
+			  (otherwise
+			   (warn "Don't know how to handle parameters in ~a." in))))
+		  assistance-code))))
+      (mapcar #'parse-parameter (append *path-params*
+					(field :|parameters| (cdr op))))
+      (unless (zerop (length optional))
 	(push '&key optional))
-    ;; FIXME we sometimes somehow generate duplicate parameters, specifics still unclear
-    ;; reproducible with the LCU schema for version 11.2.353.8505, removing duplicates on
-    ;; the loop does not work
-    ;; below call to remove-duplicates on the parametes is a workaround so that we can
-    ;; at least generate valid function params, but there's still duplicate handling code
-    (values (remove-duplicates (append required optional)) code)))
+      `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
+	   ,(append required optional
+	     `(&aux (,url ,*url*)
+		 ,headers ,query-params ,body ,uses-form))
+	 ,(field :|summary| (cdr op))
+	 ,@assistance-code
+	 (let ((,parsed-url (puri:uri ,url)))
+	   (when (boundp 'juniper:*host*)
+	     (setf (puri:uri-host ,parsed-url) juniper:*host*))
+	   (when (boundp 'juniper:*port*)
+	     (setf (puri:uri-port ,parsed-url) juniper:*port*))
+	   (let* ((,response
+		    (apply #'drakma:http-request
+			   (puri:render-uri ,parsed-url nil)
+			   :method ,(intern (string-upcase
+					     (string (car op)))
+					    'keyword)
+			   :parameters ,query-params
+			   :additional-headers ,headers
+			   :form-data ,uses-form
+			   :content-type "application/json" ; FIXME
+			   :content ,body
+			   :accept ,*accept-header*
+			   juniper:*drakma-extra-args*))
+		  (,response-string
+		    ; FIXME extract encoding from response headers?
+		    (flexi-streams:octets-to-string ,response
+						    :external-format :utf-8)))
+	     (unless (zerop (length ,response-string))
+	       ; FIXME don't assume json
+	       ; FIXME there's likely a way to get a stream from the connection directly
+	       (with-input-from-string (,stream ,response-string)
+		 (json:decode-json ,stream)))))))))
 
-(defun opmethod (op) ; FIXME is there a better way to "uppercase a symbol"?
-  (read-from-string (concatenate 'string ":" (string (car op)))))
-
-(defun ophelp (op)
-  (cdr (assoc :|summary| (cdr op))))
-
-(defun path-funcname (pathop)
-  (lisp-sym (cdr (assoc :|operationId| (cdr pathop)))))
-
-(defun genfunc (op)
-  (with-gensyms (urlsym hdrsym paramssym bodysym formsym responsesym streamsym parsedsym resstrsym)
-    (multiple-value-bind (params code) (genparams op urlsym hdrsym paramssym bodysym formsym)
-      `(defun ,(path-funcname op) ,params ; FIXME
-	 ,(ophelp op)
-	 (let ((,urlsym ,*url*)
-	       (,hdrsym '())
-	       (,paramssym '())
-	       (,bodysym nil)
-	       (,formsym nil))
-	   ,@code
-	   (let ((,parsedsym (puri:uri ,urlsym)))
-	     (if juniper:*host*
-		 (setf (puri:uri-host ,parsedsym) juniper:*host*))
-	     (if juniper:*port*
-		 (setf (puri:uri-port ,parsedsym) juniper:*port*))
-	     (let* ((,responsesym (apply #'drakma:http-request
-					(puri:render-uri ,parsedsym nil)
-					:method ,(opmethod op)
-					:parameters ,paramssym
-					:additional-headers ,hdrsym
-					:form-data ,formsym
-					:content-type "application/json" ; FIXME
-					:content ,bodysym
-					:accept ,*accept-header*
-					juniper:*drakma-extra-args*))
-		    (,resstrsym (flexi-streams:octets-to-string ,responsesym :external-format :utf-8)))
-	       (if (> (length ,resstrsym) 0)
-		   (with-input-from-string (,streamsym ,resstrsym)
-		     (json:decode-json ,streamsym)))))))))) ; FIXME we just assume this returns json, it might not
+(defun swagger-path-bindings (path &aux (name (car path)) (ops (cdr path)))
+  (let* ((*endpoint* (string name))
+	 ; FIXME we have puri as a dependency and still construct urls by hand
+	 (*url* (format nil "~a://~a~a~a" *proto* *host* *base-path* *endpoint*))
+	 (*path-params* (field :|parameters| ops)))
+    `(progn
+       ,@(mapcar #'function-for-op ops))))
 
 (defun swagger-bindings ()
   `(progn
-     ,@(loop
-	 for path in (cdr (assoc :|paths| *schema*))
-	 append (let* ((*endpoint*    (string (car path)))
-		       (*url*         (format nil "~a://~a~a~a" *proto* *host* *base-path* *endpoint*))
-		       (*path-params* (cdr (assoc :|parameters| (cdr path)))))
-		  (loop
-		    for op in (cdr path)
-		    collect (genfunc op))))))
+     ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun generate-bindings (jsonstream &key proto host base-path accept-header)
-  "Generates Swagger/OpenAPI bindings based on JSON from `jsonstream`. Optional parameters can be used to override specific fields from the schema"
-  (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x))
-	 (*schema*        (json:decode-json jsonstream))
-	 
-	 (version         (or (cdr (assoc :|swagger| *schema*)) (cdr (assoc :|openapi| *schema*))))
-	 
-	 (*proto*         (or proto         (cadr (assoc :|schemes| *schema*))    ))
-	 (*host*          (or host          (cdr (assoc :|host| *schema*))        ))
-	 (*base-path*     (or base-path     (cdr (assoc :|basePath| *schema*)) "/"))
-	 (*accept-header* (or accept-header "application/json"                    )))
+(defun bindings-from-stream (stream &key proto host base-path accept-header)
+  (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
+	 (*schema* (json:decode-json stream))
+
+	 (version (or (field :|swagger|)
+		      (field :|openapi|)
+		      (error "Cannot find version field in schema.")))
+
+	 ; FIXME we only use the first protocol presented
+	 (*proto* (or proto (car (field :|schemes|))
+		      (error "Cannot find protocol in schema.")))
+	 (*host* (or host (field :|host|)
+		     (error "Cannot find host in schema.")))
+	 (*base-path* (or base-path (field :|basePath|) "/"))
+	 (*accept-header* (or accept-header "application/json")))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
-       (error "Unsupported swagger version ~a." version)))))
-  
-;;; lazy and sloppy
+       (error "Unsupported swagger/OpenAPI version ~a." version)))))
 
-(defmacro defsource ((name options) &body body)
-  `(defmacro ,(read-from-string (concatenate 'string "bindings-from-" (string name)))
-       (,name &rest ,options &key proto host base-path (accept-header "application/json"))
-     (declare (ignore proto host base-path accept-header))
-     ,@body))
+;;;
 
-(defsource (file opts)
+(defmacro defsource (name args &body body)
+  (with-gensyms (dispatched options return)
+    (setf args (cons name args))
+    `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
+					     &key proto host base-path accept-header
+					     &aux ,dispatched ,return)
+       (declare (ignore proto host base-path accept-header))
+       (labels ((dispatch-bindings (stream)
+		  (when ,dispatched
+		    (error "Trying to dispatch bindings more than once, this is a bug on Juniper."))
+		  (setf ,dispatched t)
+		  (apply #'bindings-from-stream stream ,options)))
+	 (setf ,return (progn ,@body))
+	 (unless ,dispatched
+	   (error "Source never dispatched stream to generator, this is a bug on Juniper."))
+	 ,return))))
+
+(defsource file ()
   "Generates bindings from local file at `file`"
   (with-open-file (stream (eval file))
-    (apply #'generate-bindings stream opts)))
+    (dispatch-bindings stream)))
 
-(defsource (json opts)
-  "Generates bindings from a literal J1SON string"
+(defsource json ()
+  "Generates bindings from a literal JSON string"
   (with-input-from-string (stream (eval json))
-    (apply #'generate-bindings stream opts)))
+    (dispatch-bindings stream)))
 
-(defsource (url opts) ; FIXME there has to be a better way to do this
+(defsource url ()
   "Generates bindings for remote schema at `url`"
-  (with-input-from-string (stream (flexi-streams:octets-to-string (drakma:http-request url)))
-    (apply #'generate-bindings stream opts)))
+   ; FIXME there has to be a better way to do this
+  (with-input-from-string (stream (flexi-streams:octets-to-string
+				   (drakma:http-request (eval url))))
+    (dispatch-bindings stream)))
+
+;(bindings-from-url "https://petstore.swagger.io/v2/swagger.json")
