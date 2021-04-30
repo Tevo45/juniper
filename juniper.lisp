@@ -19,9 +19,6 @@
 (defun lisp-sym (str)
   (read-from-string (kebab:to-lisp-case str)))
 
-(defmacro either (&rest vals)
-  `(loop for val in (list ,@vals) do (if val (return val))))
-
 (defun genparams (op urlsym hdrsym paramssym bodysym formsym)
   (let ((required '())
 	(optional '())
@@ -128,12 +125,12 @@
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x))
 	 (*schema*        (json:decode-json jsonstream))
 	 
-	 (version         (either (cdr (assoc :|swagger| *schema*)) (cdr (assoc :|openapi| *schema*))))
+	 (version         (or (cdr (assoc :|swagger| *schema*)) (cdr (assoc :|openapi| *schema*))))
 	 
-	 (*proto*         (either proto         (cadr (assoc :|schemes| *schema*))    ))
-	 (*host*          (either host          (cdr (assoc :|host| *schema*))        ))
-	 (*base-path*     (either base-path     (cdr (assoc :|basePath| *schema*)) "/"))
-	 (*accept-header* (either accept-header "application/json"                    )))
+	 (*proto*         (or proto         (cadr (assoc :|schemes| *schema*))    ))
+	 (*host*          (or host          (cdr (assoc :|host| *schema*))        ))
+	 (*base-path*     (or base-path     (cdr (assoc :|basePath| *schema*)) "/"))
+	 (*accept-header* (or accept-header "application/json"                    )))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
