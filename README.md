@@ -34,6 +34,10 @@ CREATE-USER
     (login-user "sekuritz@!47" "tevo"))
 ((:CODE . 200) (:TYPE . "unknown")
  (:MESSAGE . "logged in user session:1613522477592"))
+ 
+> (add-pet '((:id . 0) (:category . ((:id . 0) (:name . "cat"))) (:name . "katyusha") (:photo-urls . nil) (:tags . nil) (:status . "deceased")))
+((:ID . 9222968140497309189) (:CATEGORY (:ID . 0) (:NAME . "cat"))
+ (:NAME . "katyusha") (:STATUS . "deceased"))
 ```
 
 ## License
