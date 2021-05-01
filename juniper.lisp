@@ -10,6 +10,7 @@
 (defvar *accept-header*)
 (defvar *endpoint*)
 (defvar *path-params*)
+(defvar *required-as-keyword*)
 
 ;; can't have them as parameters to the generated functions lest them conflict
 ;; with a parameter in the schema; unsure if using dynamic variables for this
@@ -59,6 +60,7 @@
       (unless (zerop (length url))
 	(setf root (fetch-and-parse-json url)))
       (recursive-resolve-ref
+       ; FIXME validate string first
        (mapcar #'intern (cdr (cl-ppcre:split "/" location))
 	       (replicate 'keyword))
        root))))
@@ -85,7 +87,10 @@
 		      (is-required (field :|required| param))
 		      (in (field :|in| param)))
 		 (if is-required
-		     (push symbolic-name required)
+		     (push (if *required-as-keyword*
+			       `(,symbolic-name (error "~a is required." ',symbolic-name))
+			       symbolic-name)
+			   required)
 		     (push `(,symbolic-name nil ,supplied-p) optional))
 		 (push
 		  `(if ,(if is-required t supplied-p)
@@ -114,8 +119,10 @@
 		  assistance-code))))
       (mapcar #'parse-parameter (append *path-params*
 					(field :|parameters| (cdr op))))
-      (unless (zerop (length optional))
+      (unless (or *required-as-keyword* (zerop (length optional)))
 	(push '&key optional))
+      (when *required-as-keyword*
+	(push '&key required)) ; required comes first so applies to optional as well
       `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
 	   ,(append required optional
 	     `(&aux (,url ,*url*)
@@ -162,7 +169,7 @@
   `(progn
      ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun bindings-from-stream (stream &key proto host base-path accept-header)
+(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword)
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
 	 (*schema* (json:decode-json stream))
 
@@ -176,7 +183,8 @@
 	 (*host* (or host (field :|host|)
 		     (error "Cannot find host in schema.")))
 	 (*base-path* (or base-path (field :|basePath|) "/"))
-	 (*accept-header* (or accept-header "application/json")))
+	 (*accept-header* (or accept-header "application/json"))
+	 (*required-as-keyword* required-as-keyword))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -184,13 +192,14 @@
 
 ;;;
 
-(defmacro defsource (name args &body body)
+(defmacro defsource (name args &body body
+		     &aux (gen-opts '(proto host base-path required-as-keyword)))
   (with-gensyms (dispatched options return)
     (setf args (cons name args))
     `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
-					     &key proto host base-path accept-header
+					     &key ,@gen-opts
 					     &aux ,dispatched ,return)
-       (declare (ignore proto host base-path accept-header))
+       (declare (ignore ,@gen-opts))
        (labels ((dispatch-bindings (stream)
 		  (when ,dispatched
 		    (error "Trying to dispatch bindings more than once, this is a bug on Juniper."))
