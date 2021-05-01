@@ -182,7 +182,7 @@
 		      (error "Cannot find protocol in schema.")))
 	 (*host* (or host (field :|host|)
 		     (error "Cannot find host in schema.")))
-	 (*base-path* (or base-path (field :|basePath|) "/"))
+	 (*base-path* (or base-path (field :|basePath|) ""))
 	 (*accept-header* (or accept-header "application/json"))
 	 (*required-as-keyword* required-as-keyword))
     (switch (version :test #'string=)
