@@ -6,7 +6,7 @@
            :*host*
            :*port*
 
-           :generate-bindings
+           :bindings-from-stream
 	   
 	   :bindings-from-file
 	   :bindings-from-json
