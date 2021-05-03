@@ -4,9 +4,6 @@
 
 ;; those are used by the generator internally and should be globally unbound
 (defvar *schema*)
-(defvar *proto*)
-(defvar *url*)
-(defvar *base-path*)
 (defvar *accept-header*)
 (defvar *endpoint*)
 (defvar *path-params*)
@@ -18,6 +15,8 @@
 ;; *drakma-extra-args* also breaks the abstraction and ties us up to drakma
 
 ;; those can be used to change the behaviour of the generated functions at runtime
+(defvar *proto*)
+(defvar *base-path*)
 (defvar *host*)
 (defvar *port*)
 (defvar *drakma-extra-args* nil)
@@ -75,11 +74,34 @@
 		   alist
 		   (resolve-ref ref root))))
 
+(defun build-url (proto host port base-path endpoint
+		  &aux (url (puri:uri "")))
+  (setf (puri:uri-scheme url) (intern proto 'keyword))
+  (setf (puri:uri-host url) host)
+  (when port
+    (setf (puri:uri-port url) port))
+  ; FIXME pretty sure this isn't the proper way to concatenate the paths
+  (setf (puri:uri-parsed-path url)
+	(remove-if
+	 (lambda (x)
+	   (when (typep x 'sequence)
+	     (zerop (length x))))
+	 (append
+	  '(:absolute)
+	  (cdr
+	   (puri:uri-parsed-path
+	    (puri:parse-uri base-path)))
+	  (cdr
+	   (puri:uri-parsed-path
+	    (puri:parse-uri endpoint))))))
+  (puri:render-uri url nil))
+
 ;;; generator code
 
+; FIXME barely readable mess
 (defun function-for-op (op &aux required optional assistance-code)
-  (with-gensyms (url query-params headers body uses-form parsed-url
-		 response response-string stream)
+  (with-gensyms (url query-params headers body uses-form proto host port base-path
+		 endpoint response response-string stream)
     (labels ((parse-parameter (param)
 	       (let* ((name (field :|name| param))
 		      (symbolic-name (lisp-symbol name))
@@ -96,9 +118,9 @@
 		  `(if ,(if is-required t supplied-p)
 		       ,(switch (in :test #'string=)
 			  ("path"
-			   `(setf ,url
+			   `(setf ,base-path
 				  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
-							  ,url (mkstr ,symbolic-name))))
+							  ,base-path (mkstr ,symbolic-name))))
 			  ("query"
 			   `(push (cons ,name (mkstr ,symbolic-name))
 					,query-params))
@@ -123,44 +145,45 @@
 	(push '&key optional))
       (when *required-as-keyword*
 	(push '&key required)) ; required comes first so applies to optional as well
+      ; maybe split this into many functions?
       `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
 	   ,(append required optional
-	     `(&aux (,url ,*url*)
+	     `(&aux
+	       ,@(macrolet ((replaceable (x)
+			      ``(if (boundp ',',x) ,',x ,,x)))
+		   `((,proto ,(replaceable *proto*))
+		     (,host ,(replaceable *host*))
+		     (,port ,(replaceable *port*))
+		     (,base-path ,(replaceable *base-path*))))
+		 (,endpoint ,*endpoint*)
 		 ,headers ,query-params ,body ,uses-form))
 	 ,(field :|summary| (cdr op))
 	 ,@assistance-code
-	 (let ((,parsed-url (puri:uri ,url)))
-	   (when (boundp 'juniper:*host*)
-	     (setf (puri:uri-host ,parsed-url) juniper:*host*))
-	   (when (boundp 'juniper:*port*)
-	     (setf (puri:uri-port ,parsed-url) juniper:*port*))
-	   (let* ((,response
-		    (apply #'drakma:http-request
-			   (puri:render-uri ,parsed-url nil)
-			   :method ,(intern (string-upcase
-					     (string (car op)))
-					    'keyword)
-			   :parameters ,query-params
-			   :additional-headers ,headers
-			   :form-data ,uses-form
-			   :content-type "application/json" ; FIXME
-			   :content ,body
-			   :accept ,*accept-header*
-			   juniper:*drakma-extra-args*))
-		  (,response-string
-		    ; FIXME extract encoding from response headers?
-		    (flexi-streams:octets-to-string ,response
-						    :external-format :utf-8)))
-	     (unless (zerop (length ,response-string))
-	       ; FIXME don't assume json
-	       ; FIXME there's likely a way to get a stream from the connection directly
-	       (with-input-from-string (,stream ,response-string)
-		 (json:decode-json ,stream)))))))))
+	 (let* ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
+		(,response
+		  (apply #'drakma:http-request ,url
+			 :method ,(intern (string-upcase
+					   (string (car op)))
+					  'keyword)
+			 :parameters ,query-params
+			 :additional-headers ,headers
+			 :form-data ,uses-form
+			 :content-type "application/json" ; FIXME
+			 :content ,body
+			 :accept ,*accept-header*
+			 juniper:*drakma-extra-args*))
+		(,response-string
+		  ; FIXME extract encoding from response headers?
+		  (flexi-streams:octets-to-string ,response
+						  :external-format :utf-8)))
+	   (unless (zerop (length ,response-string))
+	     ; FIXME don't assume json
+	     ; FIXME there's likely a way to get a stream from the connection directly
+	     (with-input-from-string (,stream ,response-string)
+	       (json:decode-json ,stream))))))))
 
 (defun swagger-path-bindings (path &aux (name (car path)) (ops (cdr path)))
   (let* ((*endpoint* (string name))
-	 ; FIXME we have puri as a dependency and still construct urls by hand
-	 (*url* (format nil "~a://~a~a~a" *proto* *host* *base-path* *endpoint*))
 	 (*path-params* (field :|parameters| ops)))
     `(progn
        ,@(mapcar #'function-for-op ops))))
@@ -182,9 +205,10 @@
 		      (error "Cannot find protocol in schema.")))
 	 (*host* (or host (field :|host|)
 		     (error "Cannot find host in schema.")))
-	 (*base-path* (or base-path (field :|basePath|) ""))
+	 (*base-path* (or base-path (field :|basePath|) "/"))
 	 (*accept-header* (or accept-header "application/json"))
-	 (*required-as-keyword* required-as-keyword))
+	 (*required-as-keyword* required-as-keyword)
+	 (*port*))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -226,3 +250,4 @@
   (with-input-from-string (stream (flexi-streams:octets-to-string
 				   (drakma:http-request (eval url))))
     (dispatch-bindings stream)))
+;(juniper:bindings-from-url "https://esi.evetech.net/_latest/swagger.json")
