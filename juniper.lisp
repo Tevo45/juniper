@@ -250,4 +250,3 @@
   (with-input-from-string (stream (flexi-streams:octets-to-string
 				   (drakma:http-request (eval url))))
     (dispatch-bindings stream)))
-;(juniper:bindings-from-url "https://esi.evetech.net/_latest/swagger.json")
