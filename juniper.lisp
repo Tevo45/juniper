@@ -20,6 +20,7 @@
 (defvar *base-path*)
 (defvar *host*)
 (defvar *port*)
+(defvar *default-headers*)
 (defvar *drakma-extra-args* nil)
 
 ;;; utilities
@@ -38,6 +39,12 @@
 (defun assoc-field (item alist)
   "Looks up the value associated with `item` in `alist`"
   (cdr (assoc item alist)))
+
+(defun merge-alist (defaults specifics &optional (test #'equal))
+  "Non-destructively merge defaults into specifics."
+  (loop for default in defaults
+        do (pushnew default specifics :test test :key #'car))
+  specifics)
 
 (defun replicate (item &aux (cons (list item)))
   "Returns an infinite list of `item`"
@@ -102,7 +109,7 @@
 ; FIXME barely readable mess
 (defun function-for-op (op &aux required optional assistance-code)
   (with-gensyms (url query-params headers body uses-form proto host port base-path
-                     endpoint response response-string status-code response-headers)
+                     endpoint response response-string status-code response-headers default-headers)
     (labels ((parse-parameter (param)
 	       (let* ((name (field :|name| param))
 		      (symbolic-name (lisp-symbol name))
@@ -150,12 +157,13 @@
       `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
 	   ,(append required optional
 	     `(&aux
-	       ,@(macrolet ((replaceable (x)
-			      ``(if (boundp ',',x) ,',x ,,x)))
-		   `((,proto ,(replaceable *proto*))
-		     (,host ,(replaceable *host*))
-		     (,port ,(replaceable *port*))
-		     (,base-path ,(replaceable *base-path*))))
+                 ,@(macrolet ((replaceable (x)
+                                ``(if (boundp ',',x) ,',x ,,x)))
+                     `((,proto ,(replaceable *proto*))
+                       (,host ,(replaceable *host*))
+                       (,port ,(replaceable *port*))
+                       (,base-path ,(replaceable *base-path*))
+                       (,default-headers ,(replaceable *default-headers*))))
 		 (,endpoint ,*endpoint*)
 		 ,headers ,query-params ,body ,uses-form))
 	 ,(field :|summary| (cdr op))
@@ -170,7 +178,8 @@
                                       (string (car op)))
                                      'keyword)
                     :parameters ,query-params
-                    :additional-headers ,headers
+                    :additional-headers (merge-alist ,default-headers
+                                                     ,headers)
                     :form-data ,uses-form
                     :content-type ,*content-type*
                     :content ,body
@@ -192,7 +201,7 @@
   `(progn
      ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type)
+(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type default-headers)
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
 	 (*schema* (json:decode-json stream))
 
@@ -209,7 +218,8 @@
 	 (*accept-header* (or accept-header "application/json"))
          (*content-type* (or content-type "application/json"))
 	 (*required-as-keyword* required-as-keyword)
-	 (*port*))
+	 (*port*)
+         (*default-headers* default-headers))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -218,7 +228,7 @@
 ;;;
 
 (defmacro defsource (name args &body body
-		     &aux (gen-opts '(proto host base-path required-as-keyword content-type)))
+		     &aux (gen-opts '(proto host base-path required-as-keyword content-type default-headers)))
   (with-gensyms (dispatched options return)
     (setf args (cons name args))
     `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
