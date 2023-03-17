@@ -8,6 +8,8 @@
 (defvar *endpoint*)
 (defvar *path-params*)
 (defvar *required-as-keyword*)
+(defvar *content-type*)
+(defvar *export*)
 
 ;; can't have them as parameters to the generated functions lest them conflict
 ;; with a parameter in the schema; unsure if using dynamic variables for this
@@ -19,11 +21,12 @@
 (defvar *base-path*)
 (defvar *host*)
 (defvar *port*)
+(defvar *default-headers*)
 (defvar *drakma-extra-args* nil)
 
 ;;; utilities
 ;; `mkstr` and `symb` are from Let over Lambda, which I believe were taken from On Lisp
-(eval-when (compile load eval)
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (defun mkstr (&rest args)
     (with-output-to-string (s)
       (dolist (a args) (princ a s))))
@@ -37,6 +40,12 @@
 (defun assoc-field (item alist)
   "Looks up the value associated with `item` in `alist`"
   (cdr (assoc item alist)))
+
+(defun merge-alist (defaults specifics &optional (test #'equal))
+  "Non-destructively merge defaults into specifics."
+  (loop for default in defaults
+        do (pushnew default specifics :test test :key #'car))
+  specifics)
 
 (defun replicate (item &aux (cons (list item)))
   "Returns an infinite list of `item`"
@@ -101,7 +110,7 @@
 ; FIXME barely readable mess
 (defun function-for-op (op &aux required optional assistance-code)
   (with-gensyms (url query-params headers body uses-form proto host port base-path
-		 endpoint response response-string stream)
+                     endpoint response-string status-code response-headers default-headers)
     (labels ((parse-parameter (param)
 	       (let* ((name (field :|name| param))
 		      (symbolic-name (lisp-symbol name))
@@ -118,12 +127,12 @@
 		  `(if ,(if is-required t supplied-p)
 		       ,(switch (in :test #'string=)
 			  ("path"
-			   `(setf ,base-path
-				  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
-							  ,base-path (mkstr ,symbolic-name))))
+			   `(setf ,endpoint
+                                  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
+                                                          ,endpoint (mkstr ,symbolic-name))))
 			  ("query"
 			   `(push (cons ,name (mkstr ,symbolic-name))
-					,query-params))
+                                  ,query-params))
 			  ("header"
 			   `(push (cons ,name (mkstr ,symbolic-name))
 				  ,headers))
@@ -145,42 +154,44 @@
 	(push '&key optional))
       (when *required-as-keyword*
 	(push '&key required)) ; required comes first so applies to optional as well
-      ; maybe split this into many functions?
-      `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
-	   ,(append required optional
-	     `(&aux
-	       ,@(macrolet ((replaceable (x)
-			      ``(if (boundp ',',x) ,',x ,,x)))
-		   `((,proto ,(replaceable *proto*))
-		     (,host ,(replaceable *host*))
-		     (,port ,(replaceable *port*))
-		     (,base-path ,(replaceable *base-path*))))
-		 (,endpoint ,*endpoint*)
-		 ,headers ,query-params ,body ,uses-form))
-	 ,(field :|summary| (cdr op))
-	 ,@assistance-code
-	 (let* ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
-		(,response
-		  (apply #'drakma:http-request ,url
-			 :method ,(intern (string-upcase
-					   (string (car op)))
-					  'keyword)
-			 :parameters ,query-params
-			 :additional-headers ,headers
-			 :form-data ,uses-form
-			 :content-type "application/json" ; FIXME
-			 :content ,body
-			 :accept ,*accept-header*
-			 juniper:*drakma-extra-args*))
-		(,response-string
-		  ; FIXME extract encoding from response headers?
-		  (flexi-streams:octets-to-string ,response
-						  :external-format :utf-8)))
-	   (unless (zerop (length ,response-string))
-	     ; FIXME don't assume json
-	     ; FIXME there's likely a way to get a stream from the connection directly
-	     (with-input-from-string (,stream ,response-string)
-	       (json:decode-json ,stream))))))))
+      ;; maybe split this into many functions?
+      `(progn (defun ,(lisp-symbol (field :|operationId| (cdr op)))
+                  ,(append required optional
+                    `(&aux
+                        ,@(macrolet ((replaceable (x)
+                                       ``(if (boundp ',',x) ,',x ,,x)))
+                            `((,proto ,(replaceable *proto*))
+                              (,host ,(replaceable *host*))
+                              (,port ,(replaceable *port*))
+                              (,base-path ,(replaceable *base-path*))
+                              (,default-headers ,(replaceable *default-headers*))))
+                        (,endpoint ,*endpoint*)
+                        ,headers ,query-params ,body ,uses-form))
+                ,(field :|summary| (cdr op))
+                ,@assistance-code
+                (let ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
+                      (drakma:*text-content-types* '(("text" . nil)
+                                                     (nil . "json"))))
+                  ;; FIXME unused variable `status-code'
+                  (multiple-value-setq (,response-string ,status-code ,response-headers)
+                    (apply #'drakma:http-request ,url
+                           :method ,(intern (string-upcase
+                                             (string (car op)))
+                                            'keyword)
+                           :parameters ,query-params
+                           :additional-headers (merge-alist ,default-headers
+                                                            ,headers)
+                           :form-data ,uses-form
+                           :content-type ,*content-type*
+                           :content ,body
+                           :accept ,*accept-header*
+                           juniper:*drakma-extra-args*))
+                  (if (not (zerop (length ,response-string)))
+                      (when (string= (nth-value 1 (drakma:get-content-type ,response-headers))
+                                     "json")
+                        (json:decode-json-from-string ,response-string))
+                      ,response-string)))
+              ,@(when *export* `((export ',(lisp-symbol (field :|operationId| (cdr op))))))))))
 
 (defun swagger-path-bindings (path &aux (name (car path)) (ops (cdr path)))
   (let* ((*endpoint* (string name))
@@ -192,7 +203,7 @@
   `(progn
      ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword)
+(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type default-headers export)
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
 	 (*schema* (json:decode-json stream))
 
@@ -200,15 +211,18 @@
 		      (field :|openapi|)
 		      (error "Cannot find version field in schema.")))
 
-	 ; FIXME we only use the first protocol presented
+         ;; FIXME we only use the first protocol presented
 	 (*proto* (or proto (car (field :|schemes|))
 		      (error "Cannot find protocol in schema.")))
 	 (*host* (or host (field :|host|)
 		     (error "Cannot find host in schema.")))
 	 (*base-path* (or base-path (field :|basePath|) "/"))
 	 (*accept-header* (or accept-header "application/json"))
+         (*content-type* (or content-type "application/json"))
 	 (*required-as-keyword* required-as-keyword)
-	 (*port*))
+	 (*port*)
+         (*default-headers* default-headers)
+         (*export* export))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -217,7 +231,7 @@
 ;;;
 
 (defmacro defsource (name args &body body
-		     &aux (gen-opts '(proto host base-path required-as-keyword)))
+		     &aux (gen-opts '(proto host base-path required-as-keyword content-type default-headers export)))
   (with-gensyms (dispatched options return)
     (setf args (cons name args))
     `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
