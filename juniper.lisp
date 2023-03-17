@@ -126,9 +126,9 @@
 		  `(if ,(if is-required t supplied-p)
 		       ,(switch (in :test #'string=)
 			  ("path"
-			   `(setf ,base-path
-				  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
-							  ,base-path (mkstr ,symbolic-name))))
+			   `(setf ,endpoint
+                                  (cl-ppcre:regex-replace ,(format nil "{~a}" name)
+                                                          ,endpoint (mkstr ,symbolic-name))))
 			  ("query"
 			   `(push (cons ,name (mkstr ,symbolic-name))
 					,query-params))
