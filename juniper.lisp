@@ -9,6 +9,7 @@
 (defvar *path-params*)
 (defvar *required-as-keyword*)
 (defvar *content-type*)
+(defvar *export*)
 
 ;; can't have them as parameters to the generated functions lest them conflict
 ;; with a parameter in the schema; unsure if using dynamic variables for this
@@ -154,42 +155,43 @@
       (when *required-as-keyword*
 	(push '&key required)) ; required comes first so applies to optional as well
       ;; maybe split this into many functions?
-      `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
-	   ,(append required optional
-	     `(&aux
-                 ,@(macrolet ((replaceable (x)
-                                ``(if (boundp ',',x) ,',x ,,x)))
-                     `((,proto ,(replaceable *proto*))
-                       (,host ,(replaceable *host*))
-                       (,port ,(replaceable *port*))
-                       (,base-path ,(replaceable *base-path*))
-                       (,default-headers ,(replaceable *default-headers*))))
-		 (,endpoint ,*endpoint*)
-		 ,headers ,query-params ,body ,uses-form))
-	 ,(field :|summary| (cdr op))
-	 ,@assistance-code
-	 (let ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
-               (drakma:*text-content-types* '(("text" . nil)
-                                              (nil . "json"))))
-           ;; FIXME unused variable `status-code'
-           (multiple-value-setq (,response-string ,status-code ,response-headers)
-             (apply #'drakma:http-request ,url
-                    :method ,(intern (string-upcase
-                                      (string (car op)))
-                                     'keyword)
-                    :parameters ,query-params
-                    :additional-headers (merge-alist ,default-headers
-                                                     ,headers)
-                    :form-data ,uses-form
-                    :content-type ,*content-type*
-                    :content ,body
-                    :accept ,*accept-header*
-                    juniper:*drakma-extra-args*))
-	   (if (not (zerop (length ,response-string)))
-               (when (string= (nth-value 1 (drakma:get-content-type ,response-headers))
-                              "json")
-                 (json:decode-json-from-string ,response-string))
-               ,response-string))))))
+      `(progn (defun ,(lisp-symbol (field :|operationId| (cdr op)))
+                  ,(append required optional
+                    `(&aux
+                        ,@(macrolet ((replaceable (x)
+                                       ``(if (boundp ',',x) ,',x ,,x)))
+                            `((,proto ,(replaceable *proto*))
+                              (,host ,(replaceable *host*))
+                              (,port ,(replaceable *port*))
+                              (,base-path ,(replaceable *base-path*))
+                              (,default-headers ,(replaceable *default-headers*))))
+                        (,endpoint ,*endpoint*)
+                        ,headers ,query-params ,body ,uses-form))
+                ,(field :|summary| (cdr op))
+                ,@assistance-code
+                (let ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
+                      (drakma:*text-content-types* '(("text" . nil)
+                                                     (nil . "json"))))
+                  ;; FIXME unused variable `status-code'
+                  (multiple-value-setq (,response-string ,status-code ,response-headers)
+                    (apply #'drakma:http-request ,url
+                           :method ,(intern (string-upcase
+                                             (string (car op)))
+                                            'keyword)
+                           :parameters ,query-params
+                           :additional-headers (merge-alist ,default-headers
+                                                            ,headers)
+                           :form-data ,uses-form
+                           :content-type ,*content-type*
+                           :content ,body
+                           :accept ,*accept-header*
+                           juniper:*drakma-extra-args*))
+                  (if (not (zerop (length ,response-string)))
+                      (when (string= (nth-value 1 (drakma:get-content-type ,response-headers))
+                                     "json")
+                        (json:decode-json-from-string ,response-string))
+                      ,response-string)))
+              ,@(when *export* `((export ',(lisp-symbol (field :|operationId| (cdr op))))))))))
 
 (defun swagger-path-bindings (path &aux (name (car path)) (ops (cdr path)))
   (let* ((*endpoint* (string name))
@@ -201,7 +203,7 @@
   `(progn
      ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type default-headers)
+(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type default-headers export)
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
 	 (*schema* (json:decode-json stream))
 
@@ -219,7 +221,8 @@
          (*content-type* (or content-type "application/json"))
 	 (*required-as-keyword* required-as-keyword)
 	 (*port*)
-         (*default-headers* default-headers))
+         (*default-headers* default-headers)
+         (*export* export))
     (switch (version :test #'string=)
       ("2.0" (swagger-bindings))
       (otherwise
@@ -228,7 +231,7 @@
 ;;;
 
 (defmacro defsource (name args &body body
-		     &aux (gen-opts '(proto host base-path required-as-keyword content-type default-headers)))
+		     &aux (gen-opts '(proto host base-path required-as-keyword content-type default-headers export)))
   (with-gensyms (dispatched options return)
     (setf args (cons name args))
     `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
