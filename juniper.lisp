@@ -25,7 +25,7 @@
 
 ;;; utilities
 ;; `mkstr` and `symb` are from Let over Lambda, which I believe were taken from On Lisp
-(eval-when (compile load eval)
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (defun mkstr (&rest args)
     (with-output-to-string (s)
       (dolist (a args) (princ a s))))
