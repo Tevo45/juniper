@@ -110,7 +110,7 @@
 ; FIXME barely readable mess
 (defun function-for-op (op &aux required optional assistance-code)
   (with-gensyms (url query-params headers body uses-form proto host port base-path
-                     endpoint response response-string status-code response-headers default-headers)
+                     endpoint response-string status-code response-headers default-headers)
     (labels ((parse-parameter (param)
 	       (let* ((name (field :|name| param))
 		      (symbolic-name (lisp-symbol name))
