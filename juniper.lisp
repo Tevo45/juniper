@@ -102,7 +102,7 @@
 ; FIXME barely readable mess
 (defun function-for-op (op &aux required optional assistance-code)
   (with-gensyms (url query-params headers body uses-form proto host port base-path
-		 endpoint response response-string stream)
+                     endpoint response response-string status-code response-headers)
     (labels ((parse-parameter (param)
 	       (let* ((name (field :|name| param))
 		      (symbolic-name (lisp-symbol name))
@@ -160,28 +160,27 @@
 		 ,headers ,query-params ,body ,uses-form))
 	 ,(field :|summary| (cdr op))
 	 ,@assistance-code
-	 (let* ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
-		(,response
-		  (apply #'drakma:http-request ,url
-			 :method ,(intern (string-upcase
-					   (string (car op)))
-					  'keyword)
-			 :parameters ,query-params
-			 :additional-headers ,headers
-			 :form-data ,uses-form
-			 :content-type ,*content-type*
-			 :content ,body
-			 :accept ,*accept-header*
-			 juniper:*drakma-extra-args*))
-		(,response-string
-		  ; FIXME extract encoding from response headers?
-		  (flexi-streams:octets-to-string ,response
-						  :external-format :utf-8)))
-	   (unless (zerop (length ,response-string))
-	     ; FIXME don't assume json
-	     ; FIXME there's likely a way to get a stream from the connection directly
-	     (with-input-from-string (,stream ,response-string)
-	       (json:decode-json ,stream))))))))
+	 (let ((,url (build-url ,proto ,host ,port ,base-path ,endpoint))
+               (drakma:*text-content-types* '(("text" . nil)
+                                              (nil . "json"))))
+           ;; FIXME unused variable `status-code'
+           (multiple-value-setq (,response-string ,status-code ,response-headers)
+             (apply #'drakma:http-request ,url
+                    :method ,(intern (string-upcase
+                                      (string (car op)))
+                                     'keyword)
+                    :parameters ,query-params
+                    :additional-headers ,headers
+                    :form-data ,uses-form
+                    :content-type ,*content-type*
+                    :content ,body
+                    :accept ,*accept-header*
+                    juniper:*drakma-extra-args*))
+	   (if (not (zerop (length ,response-string)))
+               (when (string= (nth-value 1 (drakma:get-content-type ,response-headers))
+                              "json")
+                 (json:decode-json-from-string ,response-string))
+               ,response-string))))))
 
 (defun swagger-path-bindings (path &aux (name (car path)) (ops (cdr path)))
   (let* ((*endpoint* (string name))
