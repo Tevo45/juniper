@@ -131,7 +131,7 @@
                                                           ,endpoint (mkstr ,symbolic-name))))
 			  ("query"
 			   `(push (cons ,name (mkstr ,symbolic-name))
-					,query-params))
+                                  ,query-params))
 			  ("header"
 			   `(push (cons ,name (mkstr ,symbolic-name))
 				  ,headers))
@@ -153,7 +153,7 @@
 	(push '&key optional))
       (when *required-as-keyword*
 	(push '&key required)) ; required comes first so applies to optional as well
-      ; maybe split this into many functions?
+      ;; maybe split this into many functions?
       `(defun ,(lisp-symbol (field :|operationId| (cdr op)))
 	   ,(append required optional
 	     `(&aux
@@ -209,7 +209,7 @@
 		      (field :|openapi|)
 		      (error "Cannot find version field in schema.")))
 
-	 ; FIXME we only use the first protocol presented
+         ;; FIXME we only use the first protocol presented
 	 (*proto* (or proto (car (field :|schemes|))
 		      (error "Cannot find protocol in schema.")))
 	 (*host* (or host (field :|host|)
