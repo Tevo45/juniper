@@ -8,6 +8,7 @@
 (defvar *endpoint*)
 (defvar *path-params*)
 (defvar *required-as-keyword*)
+(defvar *content-type*)
 
 ;; can't have them as parameters to the generated functions lest them conflict
 ;; with a parameter in the schema; unsure if using dynamic variables for this
@@ -168,7 +169,7 @@
 			 :parameters ,query-params
 			 :additional-headers ,headers
 			 :form-data ,uses-form
-			 :content-type "application/json" ; FIXME
+			 :content-type ,*content-type*
 			 :content ,body
 			 :accept ,*accept-header*
 			 juniper:*drakma-extra-args*))
@@ -192,7 +193,7 @@
   `(progn
      ,@(mapcar #'swagger-path-bindings (field :|paths|))))
 
-(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword)
+(defun bindings-from-stream (stream &key proto host base-path accept-header required-as-keyword content-type)
   (let* ((cl-json:*json-identifier-name-to-lisp* (lambda (x) x)) ; avoid mangling names by accident
 	 (*schema* (json:decode-json stream))
 
@@ -207,6 +208,7 @@
 		     (error "Cannot find host in schema.")))
 	 (*base-path* (or base-path (field :|basePath|) "/"))
 	 (*accept-header* (or accept-header "application/json"))
+         (*content-type* (or content-type "application/json"))
 	 (*required-as-keyword* required-as-keyword)
 	 (*port*))
     (switch (version :test #'string=)
@@ -217,7 +219,7 @@
 ;;;
 
 (defmacro defsource (name args &body body
-		     &aux (gen-opts '(proto host base-path required-as-keyword)))
+		     &aux (gen-opts '(proto host base-path required-as-keyword content-type)))
   (with-gensyms (dispatched options return)
     (setf args (cons name args))
     `(defmacro ,(symb 'bindings-from- name) (,@args &rest ,options
